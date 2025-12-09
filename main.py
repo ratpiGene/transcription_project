@@ -34,4 +34,15 @@ def main(input_file: str) -> None:
 
 
 if __name__ == "__main__":
-    main("input.mp4")
+    import sys
+
+    if len(sys.argv) < 2:
+        print("Usage : python main.py <chemin_fichier_video>")
+        sys.exit(1)
+
+    input_file = sys.argv[1]
+
+    input_path = Path(input_file).resolve()
+
+    main(input_file)
+

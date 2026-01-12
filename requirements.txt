@@ -1,4 +1,3 @@
-torch
 transformers
 ffmpeg-python
 pathlib

@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <title>Admin - Subtitle Application</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 24px; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border: 1px solid #ddd; padding: 8px; }
+    th { background: #f0f0f0; }
+    .filters { margin-bottom: 12px; }
+    pre { background: #f7f7f7; padding: 12px; }
+  </style>
+</head>
+<body>
+  <h1>Admin Dashboard</h1>
+
+  <section>
+    <h2>Métriques</h2>
+    <button id="refreshMetrics">Rafraîchir</button>
+    <pre id="metricsBox">Chargement...</pre>
+  </section>
+
+  <section>
+    <h2>Jobs</h2>
+    <div class="filters">
+      <label>Statut:</label>
+      <input id="statusFilter" placeholder="PENDING/RUNNING/SUCCEEDED/FAILED" />
+      <label>Type:</label>
+      <input id="typeFilter" placeholder="subtitle/text/..." />
+      <button id="refreshJobs">Rafraîchir</button>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Fichier</th>
+          <th>Entrée</th>
+          <th>Sortie</th>
+          <th>Statut</th>
+          <th>Durée (s)</th>
+          <th>Logs</th>
+        </tr>
+      </thead>
+      <tbody id="jobsTable"></tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>Logs job</h2>
+    <pre id="logsBox">Sélectionnez un job.</pre>
+  </section>
+
+  <script>
+    async function loadMetrics() {
+      const response = await fetch('/api/admin/metrics', { credentials: 'same-origin' });
+      const data = await response.json();
+      document.getElementById('metricsBox').textContent = JSON.stringify(data, null, 2);
+    }
+
+    async function loadJobs() {
+      const status = document.getElementById('statusFilter').value;
+      const outputType = document.getElementById('typeFilter').value;
+      const params = new URLSearchParams();
+      if (status) params.append('status', status);
+      if (outputType) params.append('output_type', outputType);
+      const response = await fetch(`/api/admin/jobs?${params.toString()}`, { credentials: 'same-origin' });
+      const data = await response.json();
+      const tbody = document.getElementById('jobsTable');
+      tbody.innerHTML = '';
+      data.items.forEach(item => {
+        const row = document.createElement('tr');
+        row.innerHTML = `
+          <td>${item.id}</td>
+          <td>${item.filename}</td>
+          <td>${item.input_type}</td>
+          <td>${item.output_type || '-'}</td>
+          <td>${item.status}</td>
+          <td>${item.duration_seconds || '-'}</td>
+          <td><button data-job="${item.id}">Voir</button></td>
+        `;
+        row.querySelector('button').addEventListener('click', () => loadLogs(item.id));
+        tbody.appendChild(row);
+      });
+    }
+
+    async function loadLogs(jobId) {
+      const response = await fetch(`/api/admin/jobs/${jobId}/logs`, { credentials: 'same-origin' });
+      const data = await response.json();
+      document.getElementById('logsBox').textContent = JSON.stringify(data, null, 2);
+    }
+
+    document.getElementById('refreshMetrics').addEventListener('click', loadMetrics);
+    document.getElementById('refreshJobs').addEventListener('click', loadJobs);
+
+    loadMetrics();
+    loadJobs();
+  </script>
+</body>
+</html>

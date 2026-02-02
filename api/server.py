@@ -4,18 +4,13 @@ from fastapi.templating import Jinja2Templates
 from fastapi import Request
 from pathlib import Path
 import shutil
-from transcription import (
-    extract_audio,
-    load_whisper_model,
-    transcribe_audio,
-    generate_srt,
-    render_video,
-)
+from transcription import extract_audio, generate_srt, render_video
+from transcription.models.registry import load_model
 
 app = FastAPI()
 templates = Jinja2Templates(directory="web/templates")
 
-MODEL = load_whisper_model()
+MODEL = load_model("whisper")
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -32,12 +27,11 @@ async def transcribe_endpoint(
     # 1. Sauvegarde temporaire
     input_path = Path("temp_input") / file.filename
     input_path.parent.mkdir(exist_ok=True)
-    
+
     with open(input_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
 
     base_name = input_path.stem
-    outputs = {}
 
     # 2. Pipeline commun
     audio_path = Path("output_audio") / f"{base_name}.wav"
@@ -45,7 +39,7 @@ async def transcribe_endpoint(
     video_path = Path("output_video") / f"{base_name}_subtitled.mp4"
 
     extract_audio(input_path, audio_path)
-    transcription = transcribe_audio(audio_path, MODEL)
+    transcription = MODEL.transcribe(audio_path)
     generate_srt(transcription, srt_path)
 
     # 3. Selon output demandé

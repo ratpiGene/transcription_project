@@ -1,0 +1,53 @@
+version: "3.9"
+
+services:
+  api:
+    build: .
+    command: uvicorn api.app:app --host 0.0.0.0 --port 8000
+    volumes:
+      - ./storage:/app/storage
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - TRANSCRIPTION_MODEL=whisper
+    ports:
+      - "8000:8000"
+    depends_on:
+      - redis
+    restart: always
+
+  worker:
+    build: .
+    command: python -m worker.worker
+    volumes:
+      - ./storage:/app/storage
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - TRANSCRIPTION_MODEL=whisper
+    depends_on:
+      - redis
+    restart: always
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    restart: always
+
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+    restart: always
+
+  grafana:
+    image: grafana/grafana:latest
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    restart: always

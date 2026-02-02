@@ -1,3 +1,11 @@
+fastapi
+uvicorn
+redis
+rq
+prometheus_client
+pydantic
 transformers
+torch
 ffmpeg-python
 pathlib
+pytest

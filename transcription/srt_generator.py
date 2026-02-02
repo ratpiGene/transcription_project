@@ -1,6 +1,7 @@
 from pathlib import Path
 from .utils import format_time
-from .whisper_engine import CHUNK_LENGTH
+
+CHUNK_LENGTH = 28
 
 
 def generate_srt(transcription: dict, srt_path: Path) -> None:

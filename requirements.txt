@@ -9,8 +9,3 @@ torch
 ffmpeg-python
 pathlib
 pytest
-sqlalchemy
-psycopg2-binary
-httpx
-jinja2
-python-multipart

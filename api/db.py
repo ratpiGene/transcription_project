@@ -1,185 +1,131 @@
-import datetime as dt
-from typing import Any, Dict, List, Optional, Tuple
+import sqlite3
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
-from sqlalchemy import (
-    Column,
-    DateTime,
-    Float,
-    Integer,
-    String,
-    Text,
-    create_engine,
-    func,
-    select,
-)
-from sqlalchemy.orm import declarative_base, sessionmaker
-
-from api.settings import DATABASE_URL
-
-Base = declarative_base()
-engine = create_engine(DATABASE_URL, future=True)
-SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+from api.settings import DB_PATH
 
 
-class Job(Base):
-    __tablename__ = "jobs"
-
-    id = Column(String, primary_key=True)
-    filename = Column(String, nullable=False)
-    input_path = Column(String, nullable=False)
-    input_type = Column(String, nullable=False)
-    output_type = Column(String, nullable=True)
-    output_path = Column(String, nullable=True)
-    result_text = Column(Text, nullable=True)
-    status = Column(String, nullable=False)
-    error = Column(Text, nullable=True)
-    model_name = Column(String, nullable=True)
-    created_at = Column(DateTime, nullable=False)
-    updated_at = Column(DateTime, nullable=False)
-    duration_seconds = Column(Float, nullable=True)
-
-
-class JobEvent(Base):
-    __tablename__ = "job_events"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    job_id = Column(String, nullable=False)
-    event = Column(String, nullable=False)
-    created_at = Column(DateTime, nullable=False)
+def _connect() -> sqlite3.Connection:
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    return conn
 
 
 def init_db() -> None:
-    Base.metadata.create_all(bind=engine)
-
-
-def _now() -> dt.datetime:
-    return dt.datetime.utcnow()
-
-
-def create_job(job_id: str, filename: str, input_path: str, input_type: str) -> None:
-    with SessionLocal() as session:
-        job = Job(
-            id=job_id,
-            filename=filename,
-            input_path=input_path,
-            input_type=input_type,
-            status="PENDING",
-            created_at=_now(),
-            updated_at=_now(),
+    with _connect() as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS jobs (
+                id TEXT PRIMARY KEY,
+                filename TEXT NOT NULL,
+                input_path TEXT NOT NULL,
+                output_type TEXT,
+                output_path TEXT,
+                result_text TEXT,
+                status TEXT NOT NULL,
+                error TEXT,
+                model_name TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                duration_seconds REAL
+            )
+            """
         )
-        session.add(job)
-        session.commit()
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS job_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                job_id TEXT NOT NULL,
+                event TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.commit()
+
+
+def _now() -> str:
+    return datetime.utcnow().isoformat()
+
+
+def create_job(job_id: str, filename: str, input_path: str) -> None:
+    with _connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO jobs (id, filename, input_path, status, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (job_id, filename, input_path, "uploaded", _now(), _now()),
+        )
+        conn.commit()
 
 
 def update_job(job_id: str, **fields: Any) -> None:
     if not fields:
         return
-    with SessionLocal() as session:
-        fields["updated_at"] = _now()
-        session.query(Job).filter(Job.id == job_id).update(fields)
-        session.commit()
+    fields["updated_at"] = _now()
+    columns = ", ".join([f"{key} = ?" for key in fields.keys()])
+    values = list(fields.values())
+    with _connect() as conn:
+        conn.execute(
+            f"UPDATE jobs SET {columns} WHERE id = ?",
+            (*values, job_id),
+        )
+        conn.commit()
 
 
 def get_job(job_id: str) -> Optional[Dict[str, Any]]:
-    with SessionLocal() as session:
-        job = session.get(Job, job_id)
-        return job_to_dict(job) if job else None
+    with _connect() as conn:
+        row = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+    return dict(row) if row else None
 
 
-def list_jobs(
-    limit: int = 50,
-    offset: int = 0,
-    status: Optional[str] = None,
-    output_type: Optional[str] = None,
-) -> List[Dict[str, Any]]:
-    with SessionLocal() as session:
-        query = session.query(Job).order_by(Job.created_at.desc())
-        if status:
-            query = query.filter(Job.status == status)
-        if output_type:
-            query = query.filter(Job.output_type == output_type)
-        jobs = query.offset(offset).limit(limit).all()
-        return [job_to_dict(job) for job in jobs]
+def list_jobs(limit: int = 50) -> List[Dict[str, Any]]:
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM jobs ORDER BY created_at DESC LIMIT ?", (limit,)
+        ).fetchall()
+    return [dict(row) for row in rows]
 
 
 def add_event(job_id: str, event: str) -> None:
-    with SessionLocal() as session:
-        session.add(JobEvent(job_id=job_id, event=event, created_at=_now()))
-        session.commit()
-
-
-def list_events(job_id: str, limit: int = 100) -> List[Dict[str, Any]]:
-    with SessionLocal() as session:
-        events = (
-            session.query(JobEvent)
-            .filter(JobEvent.job_id == job_id)
-            .order_by(JobEvent.created_at.desc())
-            .limit(limit)
-            .all()
+    with _connect() as conn:
+        conn.execute(
+            "INSERT INTO job_events (job_id, event, created_at) VALUES (?, ?, ?)",
+            (job_id, event, _now()),
         )
-        return [event_to_dict(event) for event in events]
+        conn.commit()
 
 
 def get_metrics() -> Dict[str, Any]:
-    with SessionLocal() as session:
-        total_jobs = session.query(func.count(Job.id)).scalar() or 0
-        avg_duration = (
-            session.query(func.avg(Job.duration_seconds))
-            .filter(Job.duration_seconds.isnot(None))
-            .scalar()
-            or 0.0
-        )
-        by_type = session.query(Job.output_type, func.count(Job.id)).group_by(Job.output_type).all()
-        by_status = session.query(Job.status, func.count(Job.id)).group_by(Job.status).all()
-        failed_by_type = (
-            session.query(Job.output_type, func.count(Job.id))
-            .filter(Job.status == "FAILED")
-            .group_by(Job.output_type)
-            .all()
-        )
-        pending_by_type = (
-            session.query(Job.output_type, func.count(Job.id))
-            .filter(Job.status.in_(["PENDING", "QUEUED", "RUNNING"]))
-            .group_by(Job.output_type)
-            .all()
-        )
-        recent = session.query(Job).order_by(Job.created_at.desc()).limit(20).all()
+    with _connect() as conn:
+        total = conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
+        avg_duration = conn.execute(
+            "SELECT AVG(duration_seconds) FROM jobs WHERE duration_seconds IS NOT NULL"
+        ).fetchone()[0]
+        by_type = conn.execute(
+            "SELECT output_type, COUNT(*) as count FROM jobs GROUP BY output_type"
+        ).fetchall()
+        by_status = conn.execute(
+            "SELECT status, COUNT(*) as count FROM jobs GROUP BY status"
+        ).fetchall()
+        failed_by_type = conn.execute(
+            "SELECT output_type, COUNT(*) as count FROM jobs WHERE status = 'failed' GROUP BY output_type"
+        ).fetchall()
+        pending_by_type = conn.execute(
+            "SELECT output_type, COUNT(*) as count FROM jobs WHERE status IN ('queued', 'processing') GROUP BY output_type"
+        ).fetchall()
 
     return {
-        "total_jobs": total_jobs,
-        "average_duration_seconds": float(avg_duration),
+        "total_jobs": total,
+        "average_duration_seconds": avg_duration or 0.0,
         "by_type": {row[0] or "unknown": row[1] for row in by_type},
         "by_status": {row[0]: row[1] for row in by_status},
         "failed_by_type": {row[0] or "unknown": row[1] for row in failed_by_type},
         "pending_by_type": {row[0] or "unknown": row[1] for row in pending_by_type},
         "pending_total": sum(row[1] for row in pending_by_type),
         "failed_total": sum(row[1] for row in failed_by_type),
-        "recent_responses": [job_to_dict(job) for job in recent],
-    }
-
-
-def job_to_dict(job: Job) -> Dict[str, Any]:
-    return {
-        "id": job.id,
-        "filename": job.filename,
-        "input_path": job.input_path,
-        "input_type": job.input_type,
-        "output_type": job.output_type,
-        "output_path": job.output_path,
-        "result_text": job.result_text,
-        "status": job.status,
-        "error": job.error,
-        "model_name": job.model_name,
-        "created_at": job.created_at.isoformat(),
-        "updated_at": job.updated_at.isoformat(),
-        "duration_seconds": job.duration_seconds,
-    }
-
-
-def event_to_dict(event: JobEvent) -> Dict[str, Any]:
-    return {
-        "id": event.id,
-        "job_id": event.job_id,
-        "event": event.event,
-        "created_at": event.created_at.isoformat(),
+        "recent_responses": list_jobs(limit=20),
     }

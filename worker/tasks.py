@@ -1,53 +1,34 @@
-import json
 import logging
-import os
 import time
 from pathlib import Path
-
-import httpx
 
 from api import db
 from api.storage import result_path
 from transcription.audio import extract_audio
 from transcription.srt_generator import generate_srt
 from transcription.video_renderer import render_video
+from transcription.models.registry import load_model
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
 logger = logging.getLogger("transcription_worker")
-
-INFERENCE_URL = os.getenv("INFERENCE_URL", "http://inference:9000")
-
-
-def log_event(message: str, **payload: str) -> None:
-    logger.info(json.dumps({"message": message, **payload}))
-
-
-def run_inference(audio_path: Path, model_name: str) -> dict:
-    with httpx.Client(timeout=300.0) as client:
-        with audio_path.open("rb") as audio_file:
-            files = {"file": (audio_path.name, audio_file, "audio/wav")}
-            response = client.post(
-                f"{INFERENCE_URL}/infer",
-                data={"model_name": model_name},
-                files=files,
-            )
-            response.raise_for_status()
-            return response.json()
 
 
 def process_job(job_id: str, output_type: str, model_name: str) -> None:
     job = db.get_job(job_id)
     if not job:
-        log_event("job_missing", job_id=job_id)
+        logger.error("Job introuvable", extra={"job_id": job_id})
         return
 
     start_time = time.time()
-    db.update_job(job_id, status="RUNNING")
-    db.add_event(job_id, "running")
-    log_event("job_running", job_id=job_id, output_type=output_type)
+    db.update_job(job_id, status="processing")
+    db.add_event(job_id, "processing")
 
     try:
         input_path = Path(job["input_path"])
+        base_name = input_path.stem
         audio_path = result_path(job_id, "wav")
         srt_path = result_path(job_id, "srt")
         video_path = result_path(job_id, "mp4")
@@ -57,7 +38,8 @@ def process_job(job_id: str, output_type: str, model_name: str) -> None:
         else:
             audio_path = input_path
 
-        transcription = run_inference(audio_path, model_name)
+        model = load_model(model_name)
+        transcription = model.transcribe(audio_path)
         generate_srt(transcription, srt_path)
 
         output_path = None
@@ -79,16 +61,14 @@ def process_job(job_id: str, output_type: str, model_name: str) -> None:
         duration = time.time() - start_time
         db.update_job(
             job_id,
-            status="SUCCEEDED",
+            status="completed",
             output_path=output_path,
             result_text=result_text,
             duration_seconds=duration,
         )
-        db.add_event(job_id, "succeeded")
-        log_event("job_succeeded", job_id=job_id, duration_seconds=str(duration))
+        db.add_event(job_id, "completed")
     except Exception as exc:
         duration = time.time() - start_time
-        db.update_job(job_id, status="FAILED", error=str(exc), duration_seconds=duration)
+        db.update_job(job_id, status="failed", error=str(exc), duration_seconds=duration)
         db.add_event(job_id, "failed")
-        log_event("job_failed", job_id=job_id, error=str(exc))
         logger.exception("Erreur traitement job", extra={"job_id": job_id})

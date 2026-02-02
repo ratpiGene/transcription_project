@@ -1,24 +1,124 @@
 <!DOCTYPE html>
-<html>
+<html lang="fr">
 <head>
-    <title>Transcription IA</title>
+  <meta charset="UTF-8" />
+  <title>Subtitle Application</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 24px; }
+    .section { margin-bottom: 24px; }
+    .status { padding: 8px; background: #f3f3f3; }
+    .actions button { margin-right: 8px; }
+  </style>
 </head>
 <body>
-    <h1>Transcription IA</h1>
+  <h1>Subtitle Application</h1>
 
-    <form action="/transcribe" method="post" enctype="multipart/form-data">
-        <label>Fichier (mp4 / wav):</label>
-        <input type="file" name="file" required><br><br>
+  <div class="section">
+    <h2>1. Upload</h2>
+    <input type="file" id="file" accept=".mp4,.wav" />
+    <button id="uploadBtn">Uploader</button>
+    <div id="uploadResult"></div>
+  </div>
 
-        <label>Type d'output :</label>
-        <select name="output_type">
-            <option value="embedded_video">Vidéo avec sous-titres incrustés</option>
-            <option value="metadata_video">Vidéo avec piste de sous-titres</option>
-            <option value="subtitle">Sous-titres (.srt)</option>
-            <option value="text">Texte seul</option>
-        </select><br><br>
+  <div class="section">
+    <h2>2. Lancer un job</h2>
+    <label>Job ID:</label>
+    <input type="text" id="jobId" placeholder="job_id" />
+    <label>Type de sortie:</label>
+    <select id="outputType">
+      <option value="embedded_video">Vidéo avec sous-titres incrustés</option>
+      <option value="metadata_video">Vidéo avec piste de sous-titres</option>
+      <option value="subtitle">Sous-titres (.srt)</option>
+      <option value="text">Texte seul</option>
+    </select>
+    <button id="runBtn">Lancer</button>
+    <div id="runResult"></div>
+  </div>
 
-        <button type="submit">Envoyer</button>
-    </form>
+  <div class="section">
+    <h2>3. Suivi</h2>
+    <button id="statusBtn">Statut</button>
+    <button id="pollBtn">Poll 5s</button>
+    <div class="status" id="statusBox"></div>
+  </div>
+
+  <div class="section">
+    <h2>4. Résultat</h2>
+    <div class="actions">
+      <button id="downloadBtn">Télécharger</button>
+      <button id="previewBtn">Preview</button>
+    </div>
+    <div id="previewBox"></div>
+  </div>
+
+  <script>
+    let pollInterval = null;
+
+    async function uploadFile() {
+      const fileInput = document.getElementById('file');
+      if (!fileInput.files.length) return;
+      const formData = new FormData();
+      formData.append('file', fileInput.files[0]);
+      const response = await fetch('/api/upload', { method: 'POST', body: formData });
+      const data = await response.json();
+      document.getElementById('uploadResult').innerText = JSON.stringify(data);
+      if (data.job_id) {
+        document.getElementById('jobId').value = data.job_id;
+      }
+    }
+
+    async function runJob() {
+      const jobId = document.getElementById('jobId').value.trim();
+      const outputType = document.getElementById('outputType').value;
+      const response = await fetch(`/api/jobs/${jobId}/run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ output_type: outputType })
+      });
+      const data = await response.json();
+      document.getElementById('runResult').innerText = JSON.stringify(data);
+    }
+
+    async function fetchStatus() {
+      const jobId = document.getElementById('jobId').value.trim();
+      if (!jobId) return;
+      const response = await fetch(`/api/jobs/${jobId}/status`);
+      const data = await response.json();
+      document.getElementById('statusBox').innerText = JSON.stringify(data, null, 2);
+    }
+
+    function togglePolling() {
+      if (pollInterval) {
+        clearInterval(pollInterval);
+        pollInterval = null;
+        document.getElementById('pollBtn').innerText = 'Poll 5s';
+        return;
+      }
+      fetchStatus();
+      pollInterval = setInterval(fetchStatus, 5000);
+      document.getElementById('pollBtn').innerText = 'Stop polling';
+    }
+
+    function downloadResult() {
+      const jobId = document.getElementById('jobId').value.trim();
+      if (!jobId) return;
+      window.location.href = `/api/jobs/${jobId}/result`;
+    }
+
+    async function previewResult() {
+      const jobId = document.getElementById('jobId').value.trim();
+      if (!jobId) return;
+      const response = await fetch(`/api/jobs/${jobId}/preview`);
+      const html = await response.text();
+      document.getElementById('previewBox').innerHTML = html;
+    }
+
+    document.getElementById('uploadBtn').addEventListener('click', uploadFile);
+    document.getElementById('runBtn').addEventListener('click', runJob);
+    document.getElementById('statusBtn').addEventListener('click', fetchStatus);
+    document.getElementById('pollBtn').addEventListener('click', togglePolling);
+    document.getElementById('downloadBtn').addEventListener('click', downloadResult);
+    document.getElementById('previewBtn').addEventListener('click', previewResult);
+  </script>
 </body>
 </html>

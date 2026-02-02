@@ -1,0 +1,94 @@
+version: "3.9"
+
+services:
+  api:
+    build: .
+    command: uvicorn api.app:app --host 0.0.0.0 --port 8000
+    volumes:
+      - ./storage:/app/storage
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - TRANSCRIPTION_MODEL=whisper
+      - DATABASE_URL=postgresql+psycopg2://subtitle:subtitle@postgres:5432/subtitle
+      - INFERENCE_URL=http://inference:9000
+      - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-change_me}
+    ports:
+      - "8000:8000"
+    depends_on:
+      - redis
+      - postgres
+      - inference
+    restart: always
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  worker:
+    build: .
+    command: python -m worker.worker
+    volumes:
+      - ./storage:/app/storage
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=postgresql+psycopg2://subtitle:subtitle@postgres:5432/subtitle
+      - INFERENCE_URL=http://inference:9000
+    depends_on:
+      - redis
+      - postgres
+      - inference
+    restart: always
+
+  inference:
+    build: .
+    command: uvicorn inference.app:app --host 0.0.0.0 --port 9000
+    ports:
+      - "9000:9000"
+    restart: always
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    restart: always
+
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_USER=subtitle
+      - POSTGRES_PASSWORD=subtitle
+      - POSTGRES_DB=subtitle
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    restart: always
+
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+    restart: always
+
+  grafana:
+    image: grafana/grafana:latest
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    restart: always
+
+volumes:
+  postgres_data:
